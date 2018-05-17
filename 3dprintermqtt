@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+
+import paho.mqtt.client
+import json
+
+MQTT_HOST = "openhab.sf"
+OCTOPRINT_BASE_TOPIC = "octoprint/"  # Must include trailing "/"
+PRINTER_POWER_TOPIC = "3dprinter/power"
+PRINTER_PRINTING_TOPIC = "3dprinter/printing"
+PRINTER_REMAINING_TOPIC = "3dprinter/remaining"
+
+
+def on_message(client, userdata, msg):
+    topic = msg.topic.split(OCTOPRINT_BASE_TOPIC)[1]
+    payloadtext = msg.payload.decode()
+    try:
+        payload = json.loads(payloadtext)
+    except:
+        payload = None
+    if topic == "mqtt":
+        if payloadtext == "disconnected":
+            client.publish(PRINTER_POWER_TOPIC, "false", retain=True)
+            client.publish(PRINTER_PRINTING_TOPIC, "false", retain=True)
+
+    if topic == "event/PrinterStateChanged":
+        state = payload["state_id"]
+        if state == "OFFLINE":
+            client.publish(PRINTER_POWER_TOPIC, "false", retain=True)
+            client.publish(PRINTER_PRINTING_TOPIC, "false", retain=True)
+        elif state == "OPERATIONAL":
+            client.publish(PRINTER_POWER_TOPIC, "true", retain=True)
+            client.publish(PRINTER_PRINTING_TOPIC, "false", retain=True)
+        elif state == "PRINTING":
+            client.publish(PRINTER_POWER_TOPIC, "true", retain=True)
+            client.publish(PRINTER_PRINTING_TOPIC, "true", retain=True)
+
+    timeleft = gettimeleft(payload)
+    if timeleft is not None:
+        client.publish(PRINTER_REMAINING_TOPIC, timeleft)
+
+
+def gettimeleft(data):
+    try:
+        return int(data["printer_data"]["progress"]["printTimeLeft"])
+    except:
+        return None
+
+
+def initclient(client):
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(MQTT_HOST)
+
+
+def main():
+    client = paho.mqtt.client.Client()
+    initclient(client)
+    # Set defaults for everything
+    client.publish(PRINTER_POWER_TOPIC, "false", retain=True)
+    client.publish(PRINTER_PRINTING_TOPIC, "false", retain=True)
+    client.publish(PRINTER_REMAINING_TOPIC, "0", retain=True)
+    client.loop_forever()
+
+
+def on_connect(client, userdata, flags, rc):
+    # Subscribing in on_connect() means that if we lose the connection and
+    # reconnect then subscriptions will be renewed.
+    client.subscribe(OCTOPRINT_BASE_TOPIC + "#")
+
+
+if __name__ == "__main__":
+    main()
